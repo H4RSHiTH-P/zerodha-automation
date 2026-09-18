@@ -33,7 +33,9 @@ cp .env.example .env                # then fill in KITE_API_KEY and KITE_API_SEC
 .venv/bin/zt migrate
 ```
 
-On Linux the `pysqlite3-binary` wheel supplies a current SQLite; nothing else changes.
+On Linux the `pysqlite3-binary` wheel is picked up automatically, but at the time of writing it bundles SQLite 3.51.1
+while the runtime guard requires 3.51.3 (multi-process WAL fix). Until the wheel catches up, a Linux host needs a
+newer SQLite built from source or the Docker image described in `docs/PLAN.md`. Tests do not need it.
 
 ## Daily login
 

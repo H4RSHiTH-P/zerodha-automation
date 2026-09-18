@@ -14,7 +14,7 @@ from zt.core import db
 
 @pytest.fixture
 def conn(tmp_path):
-    c = db.connect(tmp_path / "zt.db")
+    c = db.connect(tmp_path / "zt.db", check=False)
     db.migrate(c)
     return c
 

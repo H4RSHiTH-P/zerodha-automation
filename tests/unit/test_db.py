@@ -4,7 +4,7 @@ from zt.core import db
 
 
 def test_migrate_is_idempotent(tmp_path):
-    conn = db.connect(tmp_path / "zt.db")
+    conn = db.connect(tmp_path / "zt.db", check=False)  # CI runners ship older SQLite; the guard has its own test
     assert db.migrate(conn) == [1]
     assert db.migrate(conn) == []
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

@@ -648,7 +648,7 @@ Position machine: `FLAT → ENTERING → OPEN(stop_order) → EXITING → FLAT`;
 
 **Health.** `heartbeats` every 5 s; `zt status` prints heartbeat ages, watchlist, open positions, broker orders, queued outbox, last 20 signals, last discovery summary; `/status` returns the same.
 
-**SQLite runtime (`zt/core/db.py`).** `try: import pysqlite3 as sqlite3 except ImportError: import sqlite3`; assert `sqlite_version >= 3.51.3` or exit 78. macOS: Homebrew sqlite upgrade (Phase 0); Linux: `pysqlite3-binary`. Never delete `-wal/-shm`; local disk only.
+**SQLite runtime (`zt/core/db.py`).** `try: import pysqlite3 as sqlite3 except ImportError: import sqlite3`; assert `sqlite_version >= 3.51.3` or exit 78. macOS: Homebrew sqlite upgrade (Phase 0); Linux: `pysqlite3-binary` once it bundles ≥ 3.51.3 (0.5.4.post2 of Dec 2025 bundles 3.51.1, so until then build SQLite from source or use the Docker image). Tests open the DB with `check=False`. Never delete `-wal/-shm`; local disk only.
 
 **Tests.** Unit (builder incl. skew/late-tick/outage flags and source precedence, aggregator, clock, charges, redaction, gates table-driven, sizing, corporate-action split), golden (ticks → candles; legacy trade-list parity both intervals; realistic and manual goldens incl. "stopped on entry bar"), property (fill invariants), replay, exactly-once restart incl. `stopped_out`/`adopt` and `sending` re-send, reconciler with fakes (MIS filter, side mismatch, stale order, orphan SL-M, reversed), state machine and order budget (future). CI: GitHub Actions on Linux with `pysqlite3-binary`.
 
