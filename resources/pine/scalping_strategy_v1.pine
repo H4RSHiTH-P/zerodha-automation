@@ -1,0 +1,47 @@
+//@version=6
+strategy("Scalping Strategy V1", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// Parabolic SAR Calculation (raw candles)
+sar = ta.sar(0.02, 0.02, 0.2)
+
+// 50-Length Simple Moving Average Calculation
+maLength  = 50
+ma        = ta.sma(close, maLength)
+
+// RSI Calculation
+rsiLength = 15
+rsi       = ta.rsi(close, rsiLength)
+
+// Plot MA and SAR for Visualization
+plot(ma, title="50-Length Moving Average", color=color.white, linewidth=2)
+plot(sar, title="Parabolic SAR", style=plot.style_cross, color=color.blue, linewidth=2)
+
+// Signals are evaluated on the closed candle and filled at the next candle's open
+stopLossPercent  = 2.5
+variationPercent = 0.00075
+shortCondition   = (high < sar) and (high < ma) and (((sar - high) / ma) > variationPercent) and (rsi < 50)
+longCondition    = (low > sar) and (low > ma) and (((low - sar) / ma) > variationPercent) and (rsi > 50)
+
+// Entry Logic: No new entries on the last candle of the session
+if strategy.position_size == 0 and not session.islastbar_regular
+    if shortCondition
+        strategy.entry("Start Signal - Sell", strategy.short)
+        // Provisional stop from signal close, protects the fill candle until the real fill price is known
+        strategy.exit("Short Stop Loss", "Start Signal - Sell", stop=close * (1 + stopLossPercent / 100))
+    else if longCondition
+        strategy.entry("Start Signal - Buy", strategy.long)
+        strategy.exit("Long Stop Loss", "Start Signal - Buy", stop=close * (1 - stopLossPercent / 100))
+
+// Stop Loss (re-anchored to actual fill price) and SAR Exit Logic
+else if strategy.position_size < 0
+    strategy.exit("Short Stop Loss", "Start Signal - Sell", stop=strategy.position_avg_price * (1 + stopLossPercent / 100))
+    if sar < low
+        strategy.close("Start Signal - Sell", comment="Close Signal - Buy")
+else if strategy.position_size > 0
+    strategy.exit("Long Stop Loss", "Start Signal - Buy", stop=strategy.position_avg_price * (1 - stopLossPercent / 100))
+    if sar > high
+        strategy.close("Start Signal - Buy", comment="Close Signal - Sell")
+
+// Close position at EOD on the last candle's close (not next day's open)
+if session.islastbar_regular
+    strategy.close_all(comment="End of Day - Close All", immediately=true)

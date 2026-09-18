@@ -1,0 +1,96 @@
+//@version=6
+strategy("Scalping Strategy V4", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, max_bars_back=5000)
+
+// Activity Filter Settings: entries only on days trading like today's most active stocks
+useActivityFilter = input.bool(true, "Require above average day volume", group="Activity Filter")
+lookbackSessions  = input.int(10, "Sessions compared against", minval=1, group="Activity Filter")
+volumeMultiple    = input.float(1.5, "Relative volume multiple", minval=0.1, step=0.1, group="Activity Filter")
+sessionMinutes    = input.int(375, "Session length in minutes", minval=1, group="Activity Filter")
+
+// Indicator Settings
+maLength     = input.int(50, "SMA length", minval=1, group="Indicators")
+emaLength    = input.int(20, "EMA length", minval=1, group="Indicators")
+rsiLength    = input.int(15, "RSI length", minval=1, group="Indicators")
+stLength     = input.int(10, "Supertrend ATR length", minval=1, group="Indicators")
+stMultiplier = input.float(3.0, "Supertrend multiplier", minval=0.1, step=0.1, group="Indicators")
+
+// Signal Settings: every filter can be switched off to compare against V3 behaviour
+stopLossPercent  = input.float(1.5, "Stop loss %", minval=0.1, step=0.1, group="Signals")
+variationPercent = input.float(0.00075, "Minimum SAR distance (fraction of SMA)", minval=0, step=0.00005, group="Signals")
+rsiBand          = input.float(5, "RSI distance from 50", minval=0, step=1, group="Signals")
+useEma           = input.bool(true, "Require HA close beyond EMA and EMA beyond SMA", group="Signals")
+useSupertrend    = input.bool(true, "Require Supertrend direction", group="Signals")
+useVwap          = input.bool(true, "Require HA close beyond session VWAP", group="Signals")
+exitRule         = input.string("Either", "Exit on", options=["SAR", "Supertrend", "Either"], group="Signals")
+
+// Heikin Ashi Candle Stick (same timeframe as chart): SAR and Supertrend are computed on the HA series
+haTicker = ticker.heikinashi(syminfo.tickerid)
+haSeries() =>
+    [st, stDir] = ta.supertrend(stMultiplier, stLength)
+    [high, low, close, ta.sar(0.02, 0.02, 0.2), st, stDir]
+[haHigh, haLow, haClose, sar, supertrend, stDirection] = request.security(haTicker, timeframe.period, haSeries(), lookahead=barmerge.lookahead_off)
+stUp   = stDirection < 0
+stDown = stDirection > 0
+
+// Moving Averages and RSI on the HA close, session anchored VWAP on the raw candle
+ma   = ta.sma(haClose, maLength)
+ema  = ta.ema(haClose, emaLength)
+rsi  = ta.rsi(haClose, rsiLength)
+vwap = ta.vwap(hlc3)
+
+// Volume Traded So Far Today, reset at the session open. Heikin Ashi does not alter volume
+var float cumulativeVolume = 0.0
+cumulativeVolume := session.isfirstbar_regular ? volume : cumulativeVolume + volume
+
+// Relative Volume: today measured against the same point of previous sessions, so it carries no time of day bias
+barsPerSession     = math.max(1, int(sessionMinutes * 60 / timeframe.in_seconds()))
+float volumeSum    = 0.0
+int   sessionsUsed = 0
+for i = 1 to lookbackSessions
+    float pastVolume = cumulativeVolume[barsPerSession * i]
+    if not na(pastVolume) and pastVolume > 0
+        volumeSum    += pastVolume
+        sessionsUsed += 1
+relativeVolume = sessionsUsed > 0 ? cumulativeVolume / (volumeSum / sessionsUsed) : na
+isActive       = not useActivityFilter or (not na(relativeVolume) and relativeVolume > volumeMultiple)
+
+// Plot for Visualization, shade the candles where entries are muted
+plot(ma, title="SMA", color=color.white, linewidth=2)
+plot(ema, title="EMA", color=color.orange, linewidth=1)
+plot(vwap, title="VWAP", color=color.yellow, linewidth=1, style=plot.style_linebr)
+plot(sar, title="Parabolic SAR", style=plot.style_cross, color=color.blue, linewidth=2)
+plot(supertrend, title="Supertrend", color=stUp ? color.green : color.red, linewidth=1, style=plot.style_linebr)
+bgcolor(isActive ? na : color.new(color.gray, 90), title="Inactive Period")
+
+// Signals are evaluated on the closed candle and filled at the next candle's open
+shortCondition = (haHigh < sar) and (haHigh < ma) and (((sar - haHigh) / ma) > variationPercent) and (rsi < 50 - rsiBand) and (not useEma or (haClose < ema and ema < ma)) and (not useSupertrend or stDown) and (not useVwap or haClose < vwap)
+longCondition  = (haLow > sar) and (haLow > ma) and (((haLow - sar) / ma) > variationPercent) and (rsi > 50 + rsiBand) and (not useEma or (haClose > ema and ema > ma)) and (not useSupertrend or stUp) and (not useVwap or haClose > vwap)
+
+sarExitShort = sar < haLow
+sarExitLong  = sar > haHigh
+exitShort    = exitRule == "SAR" ? sarExitShort : exitRule == "Supertrend" ? stUp : (sarExitShort or stUp)
+exitLong     = exitRule == "SAR" ? sarExitLong : exitRule == "Supertrend" ? stDown : (sarExitLong or stDown)
+
+// Entry Logic: Only while the stock is active, and no new entries on the last candle of the session
+if strategy.position_size == 0 and isActive and not session.islastbar_regular
+    if shortCondition
+        strategy.entry("Start Signal - Sell", strategy.short)
+        // Provisional stop from signal close, protects the fill candle until the real fill price is known
+        strategy.exit("Short Stop Loss", "Start Signal - Sell", stop=close * (1 + stopLossPercent / 100))
+    else if longCondition
+        strategy.entry("Start Signal - Buy", strategy.long)
+        strategy.exit("Long Stop Loss", "Start Signal - Buy", stop=close * (1 - stopLossPercent / 100))
+
+// Stop Loss (re-anchored to actual fill price) and trend flip Exit Logic, evaluated in every period
+else if strategy.position_size < 0
+    strategy.exit("Short Stop Loss", "Start Signal - Sell", stop=strategy.position_avg_price * (1 + stopLossPercent / 100))
+    if exitShort
+        strategy.close("Start Signal - Sell", comment="Close Signal - Buy")
+else if strategy.position_size > 0
+    strategy.exit("Long Stop Loss", "Start Signal - Buy", stop=strategy.position_avg_price * (1 - stopLossPercent / 100))
+    if exitLong
+        strategy.close("Start Signal - Buy", comment="Close Signal - Sell")
+
+// Close position at EOD on the last candle's close (not next day's open)
+if session.islastbar_regular
+    strategy.close_all(comment="End of Day - Close All", immediately=true)
